@@ -1,0 +1,8 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "learning-agent": "./graph/workflow.py:build_graph",
+    "learning-api": "./api.py:build_api_graph"
+  },
+  "env": ".env"
+}
