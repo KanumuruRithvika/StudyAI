@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.pytest_cache/
+.vscode/
+*.db
+
+# Python cache and generated runtime files
+**/__pycache__/
+*.py[cod]
+backend/.langgraph_api/
+backend/dev.log
+
+# Local archives
+backend.zip
+frontend.zip

@@ -1,38 +1,67 @@
 import os
-from langchain_groq import ChatGroq
-from dotenv import load_dotenv
+import re
 import time
-import random
 
-load_dotenv()
+from dotenv import load_dotenv
+from groq import RateLimitError
+from langchain_groq import ChatGroq
 
-# 🔥 LANGSMITH TRACING SETUP
-os.environ["LANGCHAIN_TRACING_V2"] = "true"
-os.environ["LANGCHAIN_PROJECT"] = "agentic-learning"
-# Make sure LANGCHAIN_API_KEY is set in .env file
 
-def get_llm():
-    return ChatGroq(
-        model="llama-3.1-8b-instant",
-        temperature=0.4,
-        max_tokens=400,   # 🔥 INCREASED FOR FULL QUIZ OUTPUT (5 questions with 4 options each)
-        api_key=os.getenv("GROQ_API_KEY"),
-        max_retries=3,    
-        timeout=30.0      
-    )
+load_dotenv(override=True)
 
-def call_llm_with_retry(llm, prompt, max_retries=5):
-    """Call LLM with exponential backoff on rate limit"""
-    from groq import RateLimitError
-    
-    for attempt in range(max_retries):
-        try:
-            time.sleep(0.5)  # 🔥 SMALL DELAY BETWEEN CALLS
-            return llm.invoke(prompt)
-        except RateLimitError as e:
-            if attempt < max_retries - 1:
-                wait_time = (2 ** attempt) + random.uniform(0, 1)
-                print(f"⏳ Rate limited. Retrying in {wait_time:.1f}s...")
+
+class RetryingChatGroq(ChatGroq):
+    """ChatGroq client with bounded retry handling for rate limits."""
+
+    def invoke(self, *args, **kwargs):
+        for attempt in range(4):
+            try:
+                return super().invoke(
+                    *args,
+                    **kwargs,
+                )
+
+            except RateLimitError as error:
+                if attempt == 3:
+                    raise
+
+                match = re.search(
+                    r"try again in ([0-9.]+)s",
+                    str(error),
+                )
+
+                if not match:
+                    raise
+
+                wait_time = float(
+                    match.group(1)
+                ) + 1
+
+                if wait_time > 30:
+                    raise
+
                 time.sleep(wait_time)
-            else:
-                raise
+
+
+def get_llm() -> RetryingChatGroq:
+    """Create the configured Groq LLM client."""
+    api_key = os.getenv("GROQ_API_KEY")
+    model_name = os.getenv("GROQ_MODEL")
+
+    if not api_key:
+        raise RuntimeError(
+            "GROQ_API_KEY is not set."
+        )
+
+    if not model_name:
+        raise RuntimeError(
+            "GROQ_MODEL is not set."
+        )
+
+    return RetryingChatGroq(
+        model=model_name,
+        api_key=api_key,
+        temperature=0.2,
+        max_tokens=4096,
+        max_retries=2,
+    )

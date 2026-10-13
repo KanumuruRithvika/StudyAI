@@ -1,115 +1,131 @@
-# STATIC QUIZ DATABASE - Hardcoded questions
-STATIC_QUIZ_INITIAL = """Q1: What is the primary advantage of using functions in programming?
-  a) Functions take more memory
-  b) Code reusability and organization
-  c) Functions are slower
-  d) No advantage
+from models.schemas import Quiz
+from models.state import LearningState
+from utils.llm import get_llm
+from utils.parser import parse_json_response
 
-Q2: What does a variable store in programming?
-  a) Only numbers
-  b) A memory location containing data
-  c) Only text
-  d) Functions
 
-Q3: How do loops improve code efficiency?
-  a) They slow down execution
-  b) Eliminate the need for functions
-  c) Repeat code blocks without rewriting
-  d) They increase memory usage
+def build_quiz_prompt(state: LearningState) -> str:
+    topic = state.get("current_topic", "")
 
-Q4: What is an algorithm?
-  a) A computer brand
-  b) A step-by-step procedure to solve a problem
-  c) A type of variable
-  d) A programming language
+    topic_data = next(
+        (
+            item
+            for item in state.get("plan", {}).get("topics", [])
+            if item.get("title") == topic
+        ),
+        {},
+    )
 
-Q5: What is the purpose of conditional statements (if/else)?
-  a) To loop through data
-  b) Make decisions based on conditions
-  c) Store data in memory
-  d) Create functions"""
-
-STATIC_QUIZ_WEAK_TOPICS = """Q1: What is the difference between break and continue in loops?
-  a) No difference
-  b) break exits loop, continue skips iteration
-  c) continue exits loop, break skips iteration
-  d) Both do the same thing
-
-Q2: How do you handle errors in programming?
-  a) Ignore them
-  b) Use try-except or try-catch blocks
-  c) Errors cannot be handled
-  d) Delete the code
-
-Q3: What is the scope of a variable?
-  a) The color of the variable
-  b) Where the variable can be accessed
-  c) The size of the variable
-  d) No importance
-
-Q4: What is recursion?
-  a) A function calling itself with a base case
-  b) A type of loop
-  c) An error in code
-  d) A way to store data
-
-Q5: What is the difference between == and = in programming?
-  a) No difference
-  b) == compares, = assigns
-  c) = compares, == assigns
-  d) Both are assignment operators"""
-
-def quiz_agent(state):
-    """Automatic quiz agent - no user input needed"""
-    print("\n[QUIZ_AGENT] Starting...")
-    current_day = state.get("current_day", 1)
+    objectives = topic_data.get("objectives", [])
     weak_topics = state.get("weak_topics", [])
-    
-    print(f"[INFO] Day {current_day} Quiz")
-    
-    # Select quiz based on weak topics
-    if weak_topics and len(weak_topics) > 0:
-        print(f"[GENERATING] Focused Quiz on Weak Topics: {', '.join(weak_topics)}")
-        quiz_text = STATIC_QUIZ_WEAK_TOPICS
+
+    if state.get("adaptive_action") == "improve_weak_topics" and weak_topics:
+        focus_title = f"{topic} (Remediation: {', '.join(weak_topics)})"
+        objectives_text = f"Weak topic areas to evaluate for remediation:\n" + chr(10).join(f"- {w}" for w in weak_topics)
     else:
-        print(f"[GENERATING] Initial Assessment Quiz")
-        quiz_text = STATIC_QUIZ_INITIAL
-    
-    print(f"[SUCCESS] Quiz Loaded:\n")
-    print(f"---")
-    print(quiz_text)
-    print(f"---\n")
-    
-    # AUTO-GENERATE ANSWERS (no user input)
-    user_answers = generate_automatic_answers(quiz_text)
-    
-    print(f"\n[AUTO_ANSWERS] Generated answers:")
-    for i, answer in enumerate(user_answers, 1):
-        print(f"   Q{i}: {answer}")
-    
-    print(f"[UPDATE] quiz_answers: {user_answers}")
+        focus_title = topic
+        objectives_text = "Topic objectives:\n" + chr(10).join(f"- {objective}" for objective in objectives)
+
+    return f"""
+Create a short assessment for the current learning topic.
+
+Topic:
+{focus_title}
+
+{objectives_text}
+
+Learner level:
+{state.get("current_level", "beginner")}
+
+Create exactly 5 multiple-choice questions.
+
+Question distribution:
+- 2 conceptual questions
+- 1 scenario-based question
+- 1 practical application question
+- 1 problem-solving question
+
+Rules:
+- Every question must have exactly 4 options.
+- There must be exactly one correct answer.
+- Questions must test understanding, not simple memorization.
+- Match the learner's current level.
+- Questions must be based only on the current topic and objectives.
+- Do not test unrelated topics.
+- Avoid duplicate questions or repeated answer patterns.
+- Include a concise explanation for the correct answer.
+- The correct answer must exactly match one option.
+- Use question_type values exactly as:
+  "conceptual", "scenario", "application", or "code".
+- Use "code" only when the topic genuinely requires code.
+- Return only valid JSON.
+
+JSON format:
+
+{{
+    "questions": [
+        {{
+            "id": "q1",
+            "question": "Question text",
+            "options": [
+                "Option A",
+                "Option B",
+                "Option C",
+                "Option D"
+            ],
+            "correct_answer": "Option A",
+            "explanation": "Why this answer is correct",
+            "question_type": "conceptual",
+            "topic": "{topic}"
+        }}
+    ]
+}}
+""".strip()
+
+
+def generate_quiz(state: LearningState) -> dict:
+    """Generate and validate a five-question topic quiz."""
+    response = get_llm().invoke(
+        build_quiz_prompt(state)
+    )
+
+    data = parse_json_response(response)
+    quiz = Quiz.model_validate(data)
+
+    if len(quiz.questions) != 5:
+        raise ValueError(
+            "Quiz must contain exactly 5 questions."
+        )
+
+    question_ids = set()
+
+    for question in quiz.questions:
+        if question.id in question_ids:
+            raise ValueError(
+                f"Duplicate quiz question ID: {question.id}"
+            )
+
+        question_ids.add(question.id)
+
+        if len(question.options) != 4:
+            raise ValueError(
+                f"Question '{question.id}' must contain exactly 4 options."
+            )
+
+        if len(set(question.options)) != 4:
+            raise ValueError(
+                f"Question '{question.id}' contains duplicate options."
+            )
+
+        if question.correct_answer not in question.options:
+            raise ValueError(
+                f"Correct answer for '{question.id}' "
+                "must match one of the options."
+            )
 
     return {
-        "quiz": quiz_text,
-        "quiz_answers": user_answers
+        "quiz": [
+            question.model_dump()
+            for question in quiz.questions
+        ]
     }
-
-def generate_automatic_answers(quiz_text):
-    """Generate demo answers automatically based on quiz content"""
-    # Demo answer pattern: Mix of correct and some incorrect
-    # This simulates a realistic learner (not perfect, but learning)
-    
-    answer_patterns = {
-        "INITIAL": ['b', 'b', 'c', 'b', 'b'],  # 5/5 on fundamentals
-        "WEAK": ['b', 'b', 'b', 'a', 'b']       # 5/5 on weak topics (learned!)
-    }
-    
-    # Detect which quiz this is
-    if "break" in quiz_text.lower() and "continue" in quiz_text.lower():
-        return answer_patterns["WEAK"]
-    else:
-        return answer_patterns["INITIAL"]
-
-def get_manual_quiz_answers():
-    """DEPRECATED - Now using auto-generated answers"""
-    pass

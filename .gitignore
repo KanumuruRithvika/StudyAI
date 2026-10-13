@@ -39,3 +39,26 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+
+# Frontend dependencies and build output
+frontend/node_modules/
+frontend/dist/
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Python virtual environments
+.venv/
+
+
+# Python cache and generated runtime files
+**/__pycache__/
+*.py[cod]
+backend/.langgraph_api/
+backend/dev.log
+
+# Local archives
+backend.zip
+frontend.zip
